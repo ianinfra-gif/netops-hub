@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>單機診斷 - 網路維運與情資控制臺</title>
+    <link id="dynamic-favicon" rel="icon" type="image/svg+xml" href="">
+    <script>
+        const setIcon = () => {
+            const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            document.getElementById('dynamic-favicon').href = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='" + (isDark ? "%23e2e8f0" : "%231e293b") + "' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='16' y='16' width='6' height='6' rx='1'/%3E%3Crect x='2' y='16' width='6' height='6' rx='1'/%3E%3Crect x='9' y='2' width='6' height='6' rx='1'/%3E%3Cpath d='M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3'/%3E%3Cpath d='M12 12V8'/%3E%3C/svg%3E";
+        };
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', setIcon);
+        setIcon();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        body { font-family: 'Space Grotesk', sans-serif; background-color: #04060a; color: #94a3b8; overflow: hidden; }
+        .code-font { font-family: 'JetBrains Mono', monospace; }
+        
+        .blueprint-grid {
+            background-color: #05070d;
+            background-image: radial-gradient(circle at 50% 10%, var(--glow-color, rgba(14, 165, 233, 0.08)) 0%, transparent 70%),
+                              linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                              linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 100% 100%, 24px 24px, 24px 24px;
+            transition: background-image 0.6s ease;
+        }
+
+        @keyframes border-running-light {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .glow-wrapper {
+            position: relative;
+            border-radius: 1.25rem;
+            padding: 1.5px;
+            background: linear-gradient(135deg, var(--border-accent, rgba(14,165,233,0.4)), rgba(255,255,255,0.05), var(--border-accent-2, rgba(99,102,241,0.3)));
+            background-size: 300% 300%;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.9), 0 0 30px var(--shadow-glow, rgba(14, 165, 233, 0.1));
+            animation: border-running-light 20s ease infinite;
+            transition: background 0.6s ease, box-shadow 0.6s ease;
+        }
+
+        .glass-panel { background: rgba(6, 9, 16, 0.88); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+        .glass-card { background: rgba(12, 18, 30, 0.65); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.06); }
+        .glass-inner { background: rgba(3, 5, 10, 0.92); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.05); }
+
+        @keyframes status-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+        .status-dot { animation: status-pulse 3s ease-in-out infinite; }
+
+        pre::-webkit-scrollbar, div::-webkit-scrollbar { width: 4px; height: 4px; }
+        pre::-webkit-scrollbar-track, div::-webkit-scrollbar-track { background: transparent; margin-top: 6px; margin-bottom: 6px; }
+        pre::-webkit-scrollbar-thumb, div::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 9999px; }
+        pre::-webkit-scrollbar-thumb:hover, div::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+        
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body id="mainBody" class="h-[100dvh] blueprint-grid flex flex-col justify-center px-1.5 py-1.5 md:py-2 md:px-3 overflow-hidden">
+    <div id="glowWrapper" class="w-full h-full md:max-w-[97%] mx-auto md:h-[97dvh] glow-wrapper">
+        <div class="w-full h-full glass-panel rounded-[calc(1.25rem-1.5px)] flex flex-col justify-between overflow-hidden">
+            
+            <div class="bg-[#080d18]/90 backdrop-blur-xl border-b border-white/10 flex flex-col shrink-0">
+                <div class="px-4 md:px-6 py-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 lg:gap-0">
+                    <div>
+                        <div id="subHeader" class="flex items-center gap-2 text-[10px] font-mono tracking-widest uppercase transition-colors duration-500 mb-1.5 md:mb-2">
+                            <span class="text-sky-400/90">SYS.NODE.01</span>
+                            <span class="text-slate-600">/</span>
+                            <span class="text-sky-400/90">TELEMETRY</span>
+                        </div>
+                        <div class="flex items-center gap-2 md:gap-3">
+                            <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-sky-400 status-dot shrink-0"></div>
+                            <h1 class="text-xl md:text-3xl font-extrabold tracking-tight text-slate-100 drop-shadow-sm truncate">網路維運與情資控制臺</h1>
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                        <div class="flex items-center gap-2 px-3 py-1.5 glass-card rounded-xl text-[10px] md:text-xs font-mono">
+                            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+                            <span class="text-emerald-400 font-semibold tracking-wider">ONLINE</span>
+                        </div>
+                        <div class="flex items-center gap-2 px-3 py-1.5 glass-card rounded-xl text-[10px] md:text-xs font-mono flex-1 lg:flex-none justify-center min-w-0">
+                            <span class="text-slate-500 shrink-0">SUBNET:</span>
+                            <span class="text-sky-400 font-bold tracking-wider truncate" id="subnetDisplay">AUTO</span>
+                        </div>
+                        <button onclick="clearCurrentTerminal()" class="px-3 py-1.5 glass-card hover:bg-white/10 text-slate-400 hover:text-rose-400 rounded-xl transition-all text-[10px] md:text-xs font-mono font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            清空
+                        </button>
+                    </div>
+                </div>
+
+                <div class="px-2 md:px-6 py-2 bg-[#020408]/80 backdrop-blur-md border-t border-white/5 flex items-center font-mono text-[10px] md:text-xs">
+                    <div class="w-full grid grid-cols-2 lg:grid-cols-4 gap-1.5 md:gap-2 p-1 md:p-1.5 bg-[#03050a]/90 backdrop-blur-xl border border-white/10 rounded-xl md:rounded-2xl shadow-2xl">
+                        <button onclick="switchTab('diag')" id="tab-diag" class="w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 bg-sky-500/20 text-sky-200 border border-sky-400/60 backdrop-blur-md shadow-[0_0_20px_rgba(14,165,233,0.3)] transition-all duration-300">
+                            <span class="w-1.5 h-1.5 md:w-2 md:h-2 bg-sky-400 rounded-full shrink-0"></span> NetDiagWeb（單機診斷）
+                        </button>
+                        <button onclick="switchTab('scan')" id="tab-scan" class="w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent transition-all duration-300">
+                            <span class="w-1.5 h-1.5 md:w-2 md:h-2 bg-indigo-400 rounded-full shrink-0"></span> NetOpsRecon（內網探測）
+                        </button>
+                        <button onclick="switchTab('sentinel')" id="tab-sentinel" class="w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent transition-all duration-300">
+                            <span class="w-1.5 h-1.5 md:w-2 md:h-2 bg-amber-400 rounded-full shrink-0"></span> PortSentinel（標靶抽查）
+                        </button>
+                        <button onclick="switchTab('logs')" id="tab-logs" class="w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent transition-all duration-300">
+                            <span class="w-1.5 h-1.5 md:w-2 md:h-2 bg-slate-200 rounded-full shrink-0"></span> LogViewer（情資日誌）
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-2 md:p-4 flex-1 overflow-hidden relative">
+                <div id="tab-content-diag" class="w-full h-full flex flex-col space-y-2 md:space-y-3">
+                    <div class="glass-card p-3 md:p-3.5 rounded-xl md:rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shrink-0 shadow-xl md:h-[108px]">
+                        <div class="space-y-1">
+                            <div class="text-[9px] md:text-[10px] font-mono uppercase tracking-widest text-sky-400/80">NETWORK TELEMETRY</div>
+                            <h3 class="text-base md:text-lg font-bold text-slate-100">核心網路與頻寬架構檢測</h3>
+                            <p class="text-[10px] md:text-xs text-slate-400 leading-relaxed hidden md:block">包含網卡狀態、Wi-Fi 雷達、閘道 ARP、防火牆通訊埠與頻寬載入評級。</p>
+                        </div>
+                        <button id="diagBtn" onclick="runTask('/run_diag', 'diagBtn', 'diagText', 'diagIcon', 'output-diag', 'execTimer-diag')" class="w-full md:w-auto px-5 md:px-7 py-2.5 md:py-3 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs tracking-wider uppercase rounded-lg md:rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg border border-sky-400/40 shrink-0">
+                            <svg id="diagIcon" class="w-4 h-4 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            <span id="diagText" class="whitespace-nowrap">執行診斷</span>
+                        </button>
+                    </div>
+                    <div class="flex-1 flex flex-col space-y-1.5 overflow-hidden">
+                        <div class="flex justify-between items-center text-[10px] md:text-xs text-slate-400 px-1 md:px-2 font-mono shrink-0">
+                            <span class="flex items-center gap-1.5 text-slate-300 font-semibold"><span class="w-1.5 h-1.5 bg-teal-400 rounded-full"></span> TERMINAL STREAM</span>
+                            <span id="execTimer-diag" class="px-2 py-0.5 glass-card rounded-md md:rounded-lg text-sky-300 font-bold">IDLE</span>
+                        </div>
+                        <div class="flex-1 w-full glass-inner rounded-xl md:rounded-2xl overflow-hidden relative shadow-inner">
+                            <pre id="output-diag" class="code-font w-full h-full text-slate-200 p-3 md:p-4 text-[10px] md:text-sm overflow-auto leading-relaxed">等待執行診斷...</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-content-scan" class="hidden w-full h-full flex flex-col space-y-2 md:space-y-3">
+                    <div class="glass-card p-3 md:p-3.5 rounded-xl md:rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shrink-0 shadow-xl md:h-[108px]">
+                        <div class="space-y-1">
+                            <div class="text-[9px] md:text-[10px] font-mono uppercase tracking-widest text-indigo-400/80">INTRANET RECON</div>
+                            <h3 class="text-base md:text-lg font-bold text-slate-100">內網存活主機與服務探測</h3>
+                            <p class="text-[10px] md:text-xs text-slate-400 leading-relaxed hidden md:block">包含網段 Ping Sweep、ARP MAC 對照、DHCP 租約交叉比對與服務埠探測。</p>
+                        </div>
+                        <button id="scanBtn" onclick="runTask('/run_scan', 'scanBtn', 'scanText', 'scanIcon', 'output-scan', 'execTimer-scan')" class="w-full md:w-auto px-5 md:px-7 py-2.5 md:py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs tracking-wider uppercase rounded-lg md:rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg border border-indigo-400/40 shrink-0">
+                            <svg id="scanIcon" class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            <span id="scanText">啟動探測</span>
+                        </button>
+                    </div>
+                    <div class="flex-1 flex flex-col space-y-1.5 overflow-hidden">
+                        <div class="flex justify-between items-center text-[10px] md:text-xs text-slate-400 px-1 md:px-2 font-mono shrink-0">
+                            <span class="flex items-center gap-1.5 text-slate-300 font-semibold"><span class="w-1.5 h-1.5 bg-fuchsia-400 rounded-full"></span> TERMINAL STREAM</span>
+                            <span id="execTimer-scan" class="px-2 py-0.5 glass-card rounded-md md:rounded-lg text-indigo-300 font-bold">IDLE</span>
+                        </div>
+                        <div class="flex-1 w-full glass-inner rounded-xl md:rounded-2xl overflow-hidden relative shadow-inner">
+                            <pre id="output-scan" class="code-font w-full h-full text-slate-200 p-3 md:p-4 text-[10px] md:text-sm overflow-auto leading-relaxed">等待啟動探測...</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-content-sentinel" class="hidden w-full h-full flex flex-col space-y-2 md:space-y-3">
+                    <div class="glass-card p-3 md:p-3.5 rounded-xl md:rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 shrink-0 shadow-xl md:h-[108px]">
+                        <div class="space-y-1 shrink-0">
+                            <div class="text-[9px] md:text-[10px] font-mono uppercase tracking-widest text-amber-400/80">PORT PROBING</div>
+                            <h3 class="text-base md:text-lg font-bold text-slate-100">特定主機服務埠標靶抽查</h3>
+                            <p class="text-[10px] md:text-xs text-slate-400 leading-relaxed hidden md:block">包含指定 IP 通訊埠存活狀態、TCP 連線建立與 RTT 響應延遲測量。</p>
+                        </div>
+                        <div class="flex-1 flex flex-col justify-center space-y-2 font-mono text-[10px] md:text-xs w-full lg:max-w-xl">
+                            <div class="flex flex-col md:flex-row items-start md:items-center gap-2">
+                                <div class="flex items-center glass-inner rounded-lg px-2 py-1.5 md:py-1 gap-1.5 shrink-0 w-full md:w-auto min-w-0">
+                                    <span class="text-amber-400 font-bold shrink-0 w-10 md:w-auto">HOST:</span>
+                                    <input id="sentinelHost" type="text" value="127.0.0.1" class="flex-1 md:w-24 bg-transparent text-slate-100 outline-none truncate">
+                                </div>
+                                <div class="flex items-center glass-inner rounded-lg px-2 py-1.5 md:py-1 gap-1.5 flex-1 w-full min-w-0">
+                                    <span class="text-amber-400 font-bold shrink-0 w-12 md:w-auto">PORTS:</span>
+                                    <input id="sentinelPorts" type="text" value="22, 80, 443, 3306, 8000, 8080, 8888, 9000" class="w-full bg-transparent text-slate-100 outline-none truncate">
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-1.5 text-slate-400 w-full overflow-x-auto hide-scrollbar">
+                                <span class="text-slate-500 shrink-0">預設:</span>
+                                <button type="button" onclick="setPresetPorts('80, 443, 8080')" class="px-2 py-0.5 glass-inner hover:bg-white/10 rounded border border-white/5 text-amber-300 whitespace-nowrap">Web</button>
+                                <button type="button" onclick="setPresetPorts('22, 3389')" class="px-2 py-0.5 glass-inner hover:bg-white/10 rounded border border-white/5 text-amber-300 whitespace-nowrap">遠端</button>
+                                <button type="button" onclick="setPresetPorts('3306, 5432')" class="px-2 py-0.5 glass-inner hover:bg-white/10 rounded border border-white/5 text-amber-300 whitespace-nowrap">資料庫</button>
+                                <button type="button" onclick="setPresetPorts('8000, 9000')" class="px-2 py-0.5 glass-inner hover:bg-white/10 rounded border border-white/5 text-amber-300 whitespace-nowrap">MIS</button>
+                            </div>
+                        </div>
+                        <button id="sentinelBtn" onclick="runSentinel()" class="w-full lg:w-auto px-5 md:px-7 py-2.5 md:py-3 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold text-xs tracking-wider uppercase rounded-lg md:rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg border border-amber-400/40 shrink-0">
+                            <svg id="sentinelIcon" class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 0V3m0 18v-5m9-7h-5M8 12H3"></path></svg>
+                            <span id="sentinelText">進行抽查</span>
+                        </button>
+                    </div>
+                    <div class="flex-1 flex flex-col space-y-1.5 overflow-hidden">
+                        <div class="flex justify-between items-center text-[10px] md:text-xs text-slate-400 px-1 md:px-2 font-mono shrink-0">
+                            <span class="flex items-center gap-1.5 text-slate-300 font-semibold"><span class="w-1.5 h-1.5 bg-rose-500 rounded-full"></span> TERMINAL STREAM</span>
+                            <span id="execTimer-sentinel" class="px-2 py-0.5 glass-card rounded-md md:rounded-lg text-amber-300 font-bold">IDLE</span>
+                        </div>
+                        <div class="flex-1 w-full glass-inner rounded-xl md:rounded-2xl overflow-hidden relative shadow-inner">
+                            <pre id="output-sentinel" class="code-font w-full h-full text-slate-200 p-3 md:p-4 text-[10px] md:text-sm overflow-auto leading-relaxed">等待進行抽查...</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-content-logs" class="hidden w-full h-full flex flex-col lg:flex-row gap-2 md:gap-3 overflow-hidden">
+                    <div class="w-full lg:w-[26%] flex-none h-[260px] lg:h-full glass-card rounded-xl md:rounded-2xl p-2 md:p-3 flex flex-col space-y-2 shadow-xl">
+                        <div class="flex justify-between items-center px-1 shrink-0">
+                            <span class="text-[9px] md:text-[10px] font-mono uppercase tracking-widest text-slate-300">HISTORICAL ARCHIVE</span>
+                            <button onclick="fetchLogList()" class="text-[10px] md:text-xs text-slate-400 hover:text-slate-100 flex items-center gap-1 font-mono">🔄 重新整理</button>
+                        </div>
+                        <div class="space-y-1.5 shrink-0">
+                            <div class="flex p-1 glass-inner rounded-lg md:rounded-xl font-mono text-[9px] md:text-[10px] gap-1 overflow-x-auto hide-scrollbar">
+                                <button onclick="setLogSource('all')" id="src-all" class="flex-1 px-2 md:px-3 py-1 rounded-md md:rounded-lg font-bold bg-white/10 text-slate-100 border border-white/20 whitespace-nowrap">全部</button>
+                                <button onclick="setLogSource('diag')" id="src-diag" class="flex-1 px-2 md:px-3 py-1 rounded-md md:rounded-lg font-bold text-slate-400 hover:text-slate-200 border border-transparent whitespace-nowrap">診斷</button>
+                                <button onclick="setLogSource('scan')" id="src-scan" class="flex-1 px-2 md:px-3 py-1 rounded-md md:rounded-lg font-bold text-slate-400 hover:text-slate-200 border border-transparent whitespace-nowrap">探測</button>
+                                <button onclick="setLogSource('sentinel')" id="src-sentinel" class="flex-1 px-2 md:px-3 py-1 rounded-md md:rounded-lg font-bold text-slate-400 hover:text-slate-200 border border-transparent whitespace-nowrap">抽查</button>
+                            </div>
+                            <div class="flex p-1 glass-inner rounded-md md:rounded-lg font-mono text-[8px] md:text-[9px] gap-1 overflow-x-auto hide-scrollbar">
+                                <button onclick="setLogFormat('all')" id="fmt-all" class="flex-1 px-1.5 md:px-2 py-0.5 rounded font-bold bg-slate-800 text-slate-200 border border-slate-600/50 whitespace-nowrap">全部格式</button>
+                                <button onclick="setLogFormat('log')" id="fmt-log" class="flex-1 px-1.5 md:px-2 py-0.5 rounded font-bold text-slate-500 hover:text-slate-300 border border-transparent whitespace-nowrap">LOG</button>
+                                <button onclick="setLogFormat('json')" id="fmt-json" class="flex-1 px-1.5 md:px-2 py-0.5 rounded font-bold text-slate-500 hover:text-slate-300 border border-transparent whitespace-nowrap">JSON</button>
+                            </div>
+                        </div>
+                        <div id="logFileList" class="flex-1 overflow-y-auto space-y-1.5 pr-1 font-mono text-[10px] md:text-xs min-h-0">
+                            <div class="text-slate-500 italic p-1.5">載入報告中...</div>
+                        </div>
+                    </div>
+                    <div class="flex-1 glass-card rounded-xl md:rounded-2xl p-2 md:p-3 flex flex-col space-y-2 overflow-hidden shadow-xl min-w-0">
+                        <div class="flex justify-between items-center px-1 font-mono text-[10px] md:text-xs shrink-0 w-full gap-2">
+                            <span id="selectedLogTitle" class="text-slate-300 font-bold truncate flex-1 min-w-0">未選擇報告</span>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <div id="jsonViewModeContainer" class="flex items-center bg-slate-950/90 border border-white/10 rounded-md md:rounded-lg p-0.5 text-[9px] md:text-[10px]">
+                                    <button onclick="setJsonViewMode('table')" id="mode-table" class="px-2 py-0.5 rounded shadow-[0_0_12px_rgba(255,255,255,0.15)] font-bold bg-white/15 text-slate-100 border border-white/30 backdrop-blur-md">📊</button>
+                                    <button onclick="setJsonViewMode('raw')" id="mode-raw" class="px-2 py-0.5 rounded font-bold text-slate-400 hover:text-slate-200 border border-transparent">📋</button>
+                                </div>
+                                <a id="downloadLogBtn" href="#" download class="hidden px-2 md:px-3 py-1 glass-inner hover:bg-white/10 text-slate-100 rounded-md md:rounded-lg text-[9px] md:text-[11px] font-bold">⬇ 下載</a>
+                            </div>
+                        </div>
+                        <div class="flex-1 min-h-0 w-full glass-inner rounded-xl md:rounded-2xl relative shadow-inner p-2 md:p-3 text-[10px] md:text-xs font-mono overflow-y-auto" id="logViewerContainer">
+                            <pre id="logViewerContent" class="code-font w-full h-full text-slate-300 leading-relaxed border-none rounded-none m-0 p-0">請選擇欲檢視的報告...</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-[#080d18]/90 backdrop-blur-xl px-4 md:px-6 py-2 md:py-2.5 border-t border-white/10 flex flex-col md:flex-row justify-between items-center text-[8px] md:text-xs font-mono text-slate-500 shrink-0 gap-0.5 md:gap-0">
+                <span>ENGINE: CROSS-PLATFORM TELEMETRY / PYTHON HTTP</span>
+                <span>INTERNAL MIS TOOLSET</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentActiveTab = 'diag';
+        let allLogFiles = [];
+        let currentSource = 'all';
+        let currentFormat = 'all';
+        let selectedLogKey = '';
+        let currentLoadedText = '';
+        let currentLoadedExt = '';
+        let jsonViewMode = 'table';
+
+        const calendarSvgIcon = `<svg class="w-3 h-3 md:w-3.5 md:h-3.5 inline text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>`;
+
+        function setPresetPorts(ports) { document.getElementById('sentinelPorts').value = ports; }
+
+        function clearCurrentTerminal() {
+            if (currentActiveTab === 'diag') document.getElementById('output-diag').textContent = '等待執行本機診斷...';
+            else if (currentActiveTab === 'scan') document.getElementById('output-scan').textContent = '等待啟動探測...';
+            else if (currentActiveTab === 'sentinel') document.getElementById('output-sentinel').textContent = '等待進行抽查...';
+            else document.getElementById('logViewerContainer').innerHTML = '<pre id="logViewerContent" class="code-font w-full h-full text-slate-300 leading-relaxed border-none rounded-none m-0 p-0">請選擇欲檢視的報告...</pre>';
+        }
+
+        function switchTab(tab) {
+            currentActiveTab = tab;
+            const tabNames = { 'diag': '本機診斷', 'scan': '內網探測', 'sentinel': '標靶抽查', 'logs': '情資日誌' };
+            document.title = `${tabNames[tab] || '控制臺'} - 網路維運與情資控制臺`;
+
+            ['diag', 'scan', 'sentinel', 'logs'].forEach(t => {
+                document.getElementById('tab-' + t).className = "w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-xs text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent transition-all duration-300";
+                document.getElementById('tab-content-' + t).classList.add('hidden');
+            });
+
+            document.getElementById('tab-content-' + tab).classList.remove('hidden');
+
+            const activeBtn = document.getElementById('tab-' + tab);
+            const subHeader = document.getElementById('subHeader');
+            const glowWrapper = document.getElementById('glowWrapper');
+            const statusDot = document.getElementById('statusDot');
+            const body = document.getElementById('mainBody');
+
+            if (tab === 'diag') {
+                activeBtn.className = "w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-xs bg-sky-500/20 text-sky-200 border border-sky-400/60 backdrop-blur-md shadow-[0_0_20px_rgba(14,165,233,0.3)] transition-all duration-300";
+                subHeader.innerHTML = '<span class="text-sky-400/90">SYS.NODE.01</span><span class="text-slate-600">/</span><span class="text-sky-400/90">TELEMETRY</span>';
+                body.style.setProperty('--glow-color', 'rgba(14, 165, 233, 0.08)');
+                glowWrapper.style.setProperty('--border-accent', 'rgba(14, 165, 233, 0.4)');
+                glowWrapper.style.setProperty('--border-accent-2', 'rgba(99, 102, 241, 0.3)');
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-sky-400 status-dot shrink-0";
+            } else if (tab === 'scan') {
+                activeBtn.className = "w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-xs bg-indigo-500/20 text-indigo-200 border border-indigo-400/60 backdrop-blur-md shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all duration-300";
+                subHeader.innerHTML = '<span class="text-indigo-400/90">SYS.NODE.02</span><span class="text-slate-600">/</span><span class="text-indigo-400/90">INTRANET RECON</span>';
+                body.style.setProperty('--glow-color', 'rgba(99, 102, 241, 0.08)');
+                glowWrapper.style.setProperty('--border-accent', 'rgba(99, 102, 241, 0.4)');
+                glowWrapper.style.setProperty('--border-accent-2', 'rgba(168, 85, 247, 0.3)');
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-indigo-400 status-dot shrink-0";
+            } else if (tab === 'sentinel') {
+                activeBtn.className = "w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-xs bg-amber-500/20 text-amber-200 border border-amber-400/60 backdrop-blur-md shadow-[0_0_20px_rgba(245,158,11,0.3)] transition-all duration-300";
+                subHeader.innerHTML = '<span class="text-amber-400/90">SYS.NODE.03</span><span class="text-slate-600">/</span><span class="text-amber-400/90">PORT SENTINEL</span>';
+                body.style.setProperty('--glow-color', 'rgba(245, 158, 11, 0.08)');
+                glowWrapper.style.setProperty('--border-accent', 'rgba(245, 158, 11, 0.4)');
+                glowWrapper.style.setProperty('--border-accent-2', 'rgba(239, 68, 68, 0.3)');
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-amber-400 status-dot shrink-0";
+            } else if (tab === 'logs') {
+                activeBtn.className = "w-full py-2 md:py-2.5 rounded-lg md:rounded-xl font-bold tracking-wider focus:outline-none flex items-center justify-center gap-1.5 md:gap-2 text-xs bg-slate-100/15 text-slate-100 border border-slate-300/60 backdrop-blur-md shadow-[0_0_20px_rgba(255,255,255,0.15)] transition-all duration-300";
+                subHeader.innerHTML = '<span class="text-slate-300/90">SYS.NODE.04</span><span class="text-slate-600">/</span><span class="text-slate-300/90">REPORT ARCHIVE</span>';
+                body.style.setProperty('--glow-color', 'rgba(255, 255, 255, 0.05)');
+                glowWrapper.style.setProperty('--border-accent', 'rgba(255, 255, 255, 0.25)');
+                glowWrapper.style.setProperty('--border-accent-2', 'rgba(148, 163, 184, 0.2)');
+                statusDot.className = "w-2.5 h-2.5 rounded-full bg-slate-200 status-dot shrink-0";
+                fetchLogList();
+            }
+        }
+
+        async function runSentinel() {
+            const host = document.getElementById('sentinelHost').value;
+            const ports = document.getElementById('sentinelPorts').value;
+            await runTask(`/run_portcheck?host=${encodeURIComponent(host)}&ports=${encodeURIComponent(ports)}`, 'sentinelBtn', 'sentinelText', 'sentinelIcon', 'output-sentinel', 'execTimer-sentinel');
+        }
+
+        async function fetchLogList() {
+            const listEl = document.getElementById('logFileList');
+            try {
+                let res = await fetch('/get_log_list');
+                allLogFiles = await res.json();
+                renderLogList();
+            } catch (err) {
+                listEl.innerHTML = `<div class="text-rose-400 p-2">載入失敗: ${err}</div>`;
+            }
+        }
+
+        function setLogSource(src) {
+            currentSource = src;
+            ['all', 'diag', 'scan', 'sentinel'].forEach(s => {
+                document.getElementById(`src-${s}`).className = (s === src) 
+                    ? "flex-1 px-2 md:px-3 py-1 rounded-md md:rounded-lg font-bold bg-white/10 text-slate-100 border border-white/20 whitespace-nowrap"
+                    : "flex-1 px-2 md:px-3 py-1 rounded-md md:rounded-lg font-bold text-slate-400 hover:text-slate-200 border border-transparent whitespace-nowrap";
+            });
+            renderLogList();
+        }
+
+        function setLogFormat(fmt) {
+            currentFormat = fmt;
+            ['all', 'log', 'json'].forEach(f => {
+                document.getElementById(`fmt-${f}`).className = (f === fmt)
+                    ? "flex-1 px-1.5 md:px-2 py-0.5 rounded font-bold bg-slate-800 text-slate-200 border border-slate-600/50 whitespace-nowrap"
+                    : "flex-1 px-1.5 md:px-2 py-0.5 rounded font-bold text-slate-500 hover:text-slate-300 border border-transparent whitespace-nowrap";
+            });
+            renderLogList();
+        }
+
+        function renderLogList() {
+            const listEl = document.getElementById('logFileList');
+            let filtered = allLogFiles.filter(f => {
+                if (currentSource === 'diag' && f.folder !== 'diag') return false;
+                if (currentSource === 'scan' && (f.folder !== 'scan_log' && f.folder !== 'scan_json')) return false;
+                if (currentSource === 'sentinel' && f.folder !== 'sentinel_log') return false;
+                if (currentFormat === 'log' && f.ext !== 'log') return false;
+                if (currentFormat === 'json' && f.ext !== 'json') return false;
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                listEl.innerHTML = '<div class="text-slate-500 italic p-1.5">無符合條件之報告。</div>';
+                return;
+            }
+
+            listEl.innerHTML = filtered.map(f => {
+                let badgeClass = (f.ext === 'json') ? 'bg-fuchsia-950/80 text-fuchsia-400 border-fuchsia-700/60'
+                    : (f.type === 'diag' ? 'bg-sky-950/80 text-sky-400 border-sky-700/60'
+                    : (f.type === 'sentinel' ? 'bg-amber-950/80 text-amber-400 border-amber-700/60' : 'bg-indigo-950/80 text-indigo-400 border-indigo-700/60'));
+
+                const isSelected = `${f.folder}/${f.name}` === selectedLogKey;
+                let activeStyle = isSelected 
+                    ? (f.type === 'diag' ? 'border-l-4 border-sky-400 bg-sky-950/40 text-slate-100' : (f.type === 'sentinel' ? 'border-l-4 border-amber-400 bg-amber-950/40 text-slate-100' : 'border-l-4 border-indigo-400 bg-indigo-950/40 text-slate-100'))
+                    : 'glass-inner hover:bg-white/5 text-slate-300';
+
+                return `
+                    <div onclick="readLogFile('${f.folder}', '${f.name}')" class="p-2 md:p-2.5 rounded-lg cursor-pointer transition-all border flex flex-col space-y-1 ${activeStyle}">
+                        <div class="flex justify-between items-center gap-2">
+                            <span class="px-1.5 py-0.5 border rounded text-[8px] md:text-[9px] font-bold uppercase shrink-0 ${badgeClass}">${f.ext}</span>
+                            <span class="text-[9px] md:text-[10px] text-slate-500 truncate text-right">${f.time}</span>
+                        </div>
+                        <div class="truncate font-semibold text-[10px] md:text-xs" title="${f.name}">${f.name}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function readLogFile(folder, filename) {
+            selectedLogKey = `${folder}/${filename}`;
+            renderLogList();
+
+            const containerEl = document.getElementById('logViewerContainer');
+            const downloadBtn = document.getElementById('downloadLogBtn');
+
+            containerEl.innerHTML = '<pre id="logViewerContent" class="code-font w-full h-full text-slate-300 leading-relaxed border-none rounded-none m-0 p-0">讀取中...</pre>';
+            document.getElementById('selectedLogTitle').textContent = filename;
+            downloadBtn.classList.remove('hidden');
+            downloadBtn.href = `/read_log_file?folder=${folder}&file=${filename}&dl=1`;
+
+            currentLoadedExt = filename.split('.').pop().toLowerCase();
+
+            try {
+                let res = await fetch(`/read_log_file?folder=${folder}&file=${filename}`);
+                currentLoadedText = await res.text();
+                renderLoadedLogContent();
+            } catch (err) {
+                containerEl.innerHTML = `<div class="text-rose-400 p-2">讀取失敗: ${err}</div>`;
+            }
+        }
+
+        function setJsonViewMode(mode) {
+            jsonViewMode = mode;
+            const activeClass = "px-2 py-0.5 rounded shadow-[0_0_12px_rgba(255,255,255,0.15)] font-bold bg-white/15 text-slate-100 border border-white/30 backdrop-blur-md";
+            const inactiveClass = "px-2 py-0.5 rounded font-bold text-slate-400 hover:text-slate-200 border border-transparent";
+
+            document.getElementById('mode-table').className = mode === 'table' ? activeClass : inactiveClass;
+            document.getElementById('mode-raw').className = mode === 'raw' ? activeClass : inactiveClass;
+            renderLoadedLogContent();
+        }
+
+        function extractReportTime(rawText, filename) {
+            if (rawText.includes('"timestamp"')) {
+                const timeMatch = rawText.match(/"timestamp"\s*:\s*"([^"]*)"/);
+                if (timeMatch && timeMatch[1]) return timeMatch[1].replace('T', ' ').replace('Z', ' UTC');
+            }
+            const startMatch = rawText.match(/Start Time:\s*([^\r\n]+)/);
+            if (startMatch && startMatch[1]) return startMatch[1].trim();
+
+            const fileMatch = filename.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+            return fileMatch ? `${fileMatch[1]}-${fileMatch[2]}-${fileMatch[3]} ${fileMatch[4]}:${fileMatch[5]}:${fileMatch[6]}` : '即時檢視';
+        }
+
+        function parseJsonTolerant(rawText) {
+            try {
+                return JSON.parse(rawText.replace(/:\s*([,\]\}])/g, ': null$1').replace(/,\s*([\]\}])/g, '$1'));
+            } catch (e) {
+                const results = [];
+                const blockRegex = /\{\s*"ip"\s*:\s*"([^"]+)"[\s\S]*?\}/g;
+                let match;
+                while ((match = blockRegex.exec(rawText)) !== null) {
+                    const block = match[0];
+                    const ip = (block.match(/"ip"\s*:\s*"([^"]*)"/) || [])[1] || '';
+                    const device_type = (block.match(/"device_type"\s*:\s*"([^"]*)"/) || [])[1] || '';
+                    const mac = (block.match(/"mac"\s*:\s*"([^"]*)"/) || [])[1] || '';
+                    const vendor = (block.match(/"vendor"\s*:\s*"([^"]*)"/) || [])[1] || '';
+                    const hostname = (block.match(/"hostname"\s*:\s*"([^"]*)"/) || [])[1] || '';
+                    const portsMatch = block.match(/"open_ports"\s*:\s*\[([^\]]*)\]/);
+                    let open_ports = portsMatch && portsMatch[1].trim() ? portsMatch[1].replace(/"/g, '').split(',').map(s => s.trim()).filter(Boolean) : [];
+                    if (ip) results.push({ ip, device_type, mac, vendor, hostname, open_ports });
+                }
+                const timeMatch = rawText.match(/"timestamp"\s*:\s*"([^"]*)"/);
+                return { timestamp: timeMatch ? timeMatch[1] : 'N/A', results: results };
+            }
+        }
+
+        function parseScanLog(rawText) {
+            const lines = rawText.split(/\r?\n/);
+            const results = [];
+            let current = null;
+            for (let line of lines) {
+                const hostMatch = line.match(/\[HOST\]\s+([0-9\.]+)(?:\s+\[(.*?)\])?\s*│\s*(.*)/);
+                if (hostMatch) {
+                    if (current) results.push(current);
+                    current = { ip: hostMatch[1].trim(), hostname: hostMatch[2] ? hostMatch[2].trim() : '', device_type: hostMatch[3] ? hostMatch[3].trim() : '一般設備', mac: '', vendor: '', open_ports: [] };
+                    continue;
+                }
+                if (current) {
+                    const macMatch = line.match(/MAC:\s*([0-9a-fA-F:]+)(?:\s*\((.*?)\))?/);
+                    if (macMatch) { current.mac = macMatch[1].trim(); current.vendor = macMatch[2] ? macMatch[2].trim() : ''; }
+                    const portMatch = line.match(/Port:\s*(.*)/);
+                    if (portMatch) current.open_ports = portMatch[1].split(',').map(p => p.trim()).filter(Boolean);
+                }
+            }
+            if (current) results.push(current);
+            return results;
+        }
+
+        function parseDiagLog(rawText) {
+            const lines = rawText.split(/\r?\n/);
+            const items = [];
+            for (let line of lines) {
+                const m = line.match(/\[(OK\vert{}FAIL\vert{}WARN\vert{}INFO)\]\s*(.*?)\s*:\s*(.*)/);
+                if (m) items.push({ status: m[1], item: m[2].trim(), detail: m[3].trim() });
+            }
+            return items;
+        }
+
+        function parseSentinelLog(rawText) {
+            const lines = rawText.split(/\r?\n/);
+            const items = [];
+            let targetHost = '';
+            for (let line of lines) {
+                const hostM = line.match(/\[INFO\]\s*目標標靶主機\s*:\s*(.*)/);
+                if (hostM) targetHost = hostM[1].trim();
+                const m = line.match(/\[(OK\vert{}FAIL)\]\s*Port\s+(\d+)\s*:\s*(.*)/);
+                if (m) items.push({ status: m[1], port: m[2], detail: m[3].trim() });
+            }
+            return { targetHost, items };
+        }
+
+        function renderLoadedLogContent() {
+            const containerEl = document.getElementById('logViewerContainer');
+            const reportTime = extractReportTime(currentLoadedText, selectedLogKey);
+
+            if (jsonViewMode === 'table') {
+                if (currentLoadedExt === 'json') {
+                    const parsed = parseJsonTolerant(currentLoadedText);
+                    renderScanTable(parsed.results || [], parsed.timestamp || reportTime, 'NetOpsRecon JSON 數據');
+                    return;
+                } else if (currentLoadedText.includes('[HOST]')) {
+                    renderScanTable(parseScanLog(currentLoadedText), reportTime, 'NetOpsRecon 探測報告');
+                    return;
+                } else if (currentLoadedText.includes('Target Port Sentinel') || currentLoadedText.includes('[抽查結論]')) {
+                    const parsed = parseSentinelLog(currentLoadedText);
+                    renderSentinelTable(parsed.items, parsed.targetHost, reportTime);
+                    return;
+                } else if (currentLoadedText.includes('Diagnostic Tool') || currentLoadedText.includes('[診斷結論]')) {
+                    renderDiagTable(parseDiagLog(currentLoadedText), reportTime);
+                    return;
+                }
+            }
+
+            containerEl.innerHTML = `<pre id="logViewerContent" class="code-font w-full h-full text-slate-300 leading-relaxed border-none rounded-none m-0 p-0">${currentLoadedText}</pre>`;
+        }
+
+        function renderScanTable(results, displayTime, badgeTitle) {
+            let tableHtml = `
+                <div class="space-y-3 font-mono">
+                    <div class="flex flex-wrap items-center gap-2 text-[9px] md:text-xs border-b border-white/10 pb-2">
+                        <span class="px-2 py-1 bg-indigo-950/80 border border-indigo-500/50 text-indigo-300 font-bold rounded-lg">${badgeTitle}</span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-slate-300 flex items-center gap-1">${calendarSvgIcon} 時間: <strong class="text-slate-100">${displayTime}</strong></span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-emerald-400 font-bold">🖥️ 發現主機: ${results.length} 臺</span>
+                    </div>
+
+                    <div class="rounded-xl border border-white/10 overflow-x-auto hide-scrollbar">
+                        <table class="w-full text-left border-collapse text-[9px] md:text-[11px] min-w-[500px]">
+                            <thead>
+                                <tr class="border-b border-white/10 text-slate-400 bg-white/5 whitespace-nowrap">
+                                    <th class="py-2 px-2 font-semibold">IP 位址</th>
+                                    <th class="py-2 px-2 font-semibold">裝置類型</th>
+                                    <th class="py-2 px-2 font-semibold">OUI 廠牌</th>
+                                    <th class="py-2 px-2 font-semibold">MAC 碼</th>
+                                    <th class="py-2 px-1.5 font-semibold">主機名稱</th>
+                                    <th class="py-2 px-2 font-semibold">開放 Ports</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-white/5 bg-black/20">
+            `;
+
+            results.forEach(item => {
+                const ports = (item.open_ports && item.open_ports.length > 0) 
+                    ? item.open_ports.map(p => `<span class="px-1 py-0.5 bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 rounded font-bold text-[8px] md:text-[10px] inline-block my-0.5">${p}</span>`).join(' ')
+                    : '<span class="text-slate-600">-</span>';
+
+                tableHtml += `
+                    <tr class="hover:bg-white/5 transition-colors">
+                        <td class="py-1.5 px-2 font-bold text-sky-400 whitespace-nowrap">${item.ip || 'N/A'}</td>
+                        <td class="py-1.5 px-2 font-semibold text-fuchsia-300 whitespace-nowrap">${item.device_type || '一般設備'}</td>
+                        <td class="py-1.5 px-2 text-slate-300 whitespace-nowrap">${item.vendor || '未知'}</td>
+                        <td class="py-1.5 px-2 text-slate-400 font-mono text-[8px] md:text-[10px] whitespace-nowrap">${item.mac || '-'}</td>
+                        <td class="py-1.5 px-1.5 text-slate-400 whitespace-nowrap">${item.hostname || '<span class="text-slate-600">-</span>'}</td>
+                        <td class="py-1.5 px-2 whitespace-nowrap">${ports}</td>
+                    </tr>
+                `;
+            });
+
+            tableHtml += `</tbody></table></div></div>`;
+            document.getElementById('logViewerContainer').innerHTML = tableHtml;
+        }
+
+        function renderDiagTable(items, displayTime) {
+            const okCount = items.filter(i => i.status === 'OK').length;
+            let tableHtml = `
+                <div class="space-y-3 font-mono">
+                    <div class="flex flex-wrap items-center gap-2 text-[9px] md:text-xs border-b border-white/10 pb-2">
+                        <span class="px-2 py-1 bg-sky-950/80 border border-sky-500/50 text-sky-300 font-bold rounded-lg">NetDiagWeb 診斷報告</span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-slate-300 flex items-center gap-1">${calendarSvgIcon} 時間: <strong class="text-slate-100">${displayTime}</strong></span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-emerald-400 font-bold">✅ 通過項目: ${okCount} / ${items.length}</span>
+                    </div>
+
+                    <div class="rounded-xl border border-white/10 overflow-x-auto hide-scrollbar">
+                        <table class="w-full text-left border-collapse text-[9px] md:text-[11px] min-w-[400px]">
+                            <thead>
+                                <tr class="border-b border-white/10 text-slate-400 bg-white/5 whitespace-nowrap">
+                                    <th class="py-2 px-2 font-semibold w-16 md:w-24">狀態</th>
+                                    <th class="py-2 px-2 font-semibold w-24 md:w-40">檢測項目</th>
+                                    <th class="py-2 px-2 font-semibold">詳細數據與說明</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-white/5 bg-black/20">
+            `;
+
+            items.forEach(item => {
+                let badge = '<span class="px-1.5 py-0.5 bg-sky-950/80 border border-sky-500/50 text-sky-300 rounded font-bold">INFO</span>';
+                if (item.status === 'OK') badge = '<span class="px-1.5 py-0.5 bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 rounded font-bold">OK</span>';
+                if (item.status === 'FAIL') badge = '<span class="px-1.5 py-0.5 bg-rose-950/80 border border-rose-500/50 text-rose-300 rounded font-bold">FAIL</span>';
+                if (item.status === 'WARN') badge = '<span class="px-1.5 py-0.5 bg-amber-950/80 border border-amber-500/50 text-amber-300 rounded font-bold">WARN</span>';
+
+                tableHtml += `
+                    <tr class="hover:bg-white/5 transition-colors">
+                        <td class="py-1.5 px-2 whitespace-nowrap">${badge}</td>
+                        <td class="py-1.5 px-2 font-bold text-slate-200 whitespace-nowrap">${item.item}</td>
+                        <td class="py-1.5 px-2 text-slate-300">${item.detail}</td>
+                    </tr>
+                `;
+            });
+
+            tableHtml += `</tbody></table></div></div>`;
+            document.getElementById('logViewerContainer').innerHTML = tableHtml;
+        }
+
+        function renderSentinelTable(items, targetHost, displayTime) {
+            const openCount = items.filter(i => i.status === 'OK').length;
+            let tableHtml = `
+                <div class="space-y-3 font-mono">
+                    <div class="flex flex-wrap items-center gap-2 text-[9px] md:text-xs border-b border-white/10 pb-2">
+                        <span class="px-2 py-1 bg-amber-950/80 border border-amber-500/50 text-amber-300 font-bold rounded-lg">PortSentinel 抽查報告</span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-slate-300 flex items-center gap-1">${calendarSvgIcon} 時間: <strong class="text-slate-100">${displayTime}</strong></span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-amber-300 font-bold">🎯 目標: ${targetHost || 'N/A'}</span>
+                        <span class="px-2 py-1 glass-card rounded-lg text-emerald-400 font-bold">🔓 開啟: ${openCount} / ${items.length}</span>
+                    </div>
+
+                    <div class="rounded-xl border border-white/10 overflow-x-auto hide-scrollbar">
+                        <table class="w-full text-left border-collapse text-[9px] md:text-[11px] min-w-[300px]">
+                            <thead>
+                                <tr class="border-b border-white/10 text-slate-400 bg-white/5 whitespace-nowrap">
+                                    <th class="py-2 px-2 font-semibold w-20 md:w-28">埠號 (Port)</th>
+                                    <th class="py-2 px-2 font-semibold w-24 md:w-36">連線狀態</th>
+                                    <th class="py-2 px-2 font-semibold">響應延遲 (RTT)</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-white/5 bg-black/20">
+            `;
+
+            items.forEach(item => {
+                const badge = item.status === 'OK' 
+                    ? '<span class="px-1.5 py-0.5 bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 rounded font-bold">OPEN</span>'
+                    : '<span class="px-1.5 py-0.5 bg-rose-950/80 border border-rose-500/50 text-rose-300 rounded font-bold">CLOSED</span>';
+
+                tableHtml += `
+                    <tr class="hover:bg-white/5 transition-colors">
+                        <td class="py-1.5 px-2 font-bold text-amber-400 whitespace-nowrap">Port ${item.port}</td>
+                        <td class="py-1.5 px-2 whitespace-nowrap">${badge}</td>
+                        <td class="py-1.5 px-2 text-slate-300">${item.detail}</td>
+                    </tr>
+                `;
+            });
+
+            tableHtml += `</tbody></table></div></div>`;
+            document.getElementById('logViewerContainer').innerHTML = tableHtml;
+        }
+
+        async function runTask(endpoint, btnId, textId, iconId, outId, timerId) {
+            const btn = document.getElementById(btnId);
+            const btnText = document.getElementById(textId);
+            const btnIcon = document.getElementById(iconId);
+            const out = document.getElementById(outId);
+            const timer = document.getElementById(timerId);
+            
+            const originalText = btnText.textContent;
+            btn.disabled = true;
+            btnText.textContent = "執行中...";
+            btnIcon.className = "w-4 h-4 text-white animate-spin";
+            btnIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>';
+            
+            out.textContent = " [INFO] 正在啟動後端程序...";
+            
+            let seconds = 0;
+            timer.className = "px-2 py-0.5 glass-card rounded-md md:rounded-lg text-amber-300 font-bold animate-pulse";
+            let interval = setInterval(() => { seconds++; timer.textContent = `ELAPSED: ${seconds}s`; }, 1000);
+
+            try {
+                let response = await fetch(endpoint);
+                let result = await response.text();
+                
+                out.innerHTML = result
+                    .replace(/\[OK\]/g, '<span class="text-emerald-400 font-semibold">[OK]</span>')
+                    .replace(/\[FAIL\]/g, '<span class="text-rose-400 font-semibold">[FAIL]</span>')
+                    .replace(/\[WARN\]/g, '<span class="text-amber-400 font-semibold">[WARN]</span>')
+                    .replace(/\[INFO\]/g, '<span class="text-sky-400 font-semibold">[INFO]</span>')
+                    .replace(/\[HOST\]/g, '<span class="text-emerald-400 font-bold">[HOST]</span>')
+                    .replace(/(\[診斷結論\].*)/g, '<span class="text-teal-200 font-bold bg-teal-900/60 px-2 py-0.5 md:px-2.5 md:py-1 rounded border border-teal-400/60 shadow-sm">$1</span>')
+                    .replace(/(\[探測結論\].*)/g, '<span class="text-fuchsia-200 font-bold bg-fuchsia-950/80 px-2 py-0.5 md:px-2.5 md:py-1 rounded border border-fuchsia-400/70 shadow-md">$1</span>')
+                    .replace(/(\[抽查結論\].*)/g, '<span class="text-rose-200 font-bold bg-rose-950/80 px-2 py-0.5 md:px-2.5 md:py-1 rounded border border-rose-400/70 shadow-md">$1</span>');
+
+                const matchSubnet = result.match(/目標掃描網段:\s*(\d+\.\d+\.\d+\.)/);
+                if (matchSubnet) document.getElementById('subnetDisplay').textContent = matchSubnet[1] + '0/24';
+            } catch (err) {
+                out.textContent = "[FATAL] 執行發生錯誤: " + err;
+            } finally {
+                clearInterval(interval);
+                timer.className = "px-2 py-0.5 glass-card rounded-md md:rounded-lg text-emerald-300 font-bold";
+                timer.textContent = `DONE (${seconds}s)`;
+                btn.disabled = false;
+                btnText.textContent = originalText;
+                btnIcon.className = "w-4 h-4 text-white";
+            }
+        }
+    </script>
+</body>
+</html>

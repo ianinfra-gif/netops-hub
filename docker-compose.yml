@@ -1,0 +1,11 @@
+services:
+  netopshub:
+    build: .
+    container_name: netopshub
+    network_mode: "host"
+    restart: unless-stopped
+    volumes:
+      - ./NetDiagWeb/logs:/app/NetDiagWeb/logs
+      - ./NetOpsRecon/logs:/app/NetOpsRecon/logs
+      - ./NetOpsRecon/jsons:/app/NetOpsRecon/jsons
+      - ./PortSentinel/logs:/app/PortSentinel/logs
